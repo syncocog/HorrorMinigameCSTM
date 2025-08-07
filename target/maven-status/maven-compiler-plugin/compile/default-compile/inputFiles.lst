@@ -1,0 +1,16 @@
+/workspace/src/main/java/com/bloodties/managers/ConfigManager.java
+/workspace/src/main/java/com/bloodties/game/GamePlayer.java
+/workspace/src/main/java/com/bloodties/BloodTiesPlugin.java
+/workspace/src/main/java/com/bloodties/game/GameMode.java
+/workspace/src/main/java/com/bloodties/listeners/GameListener.java
+/workspace/src/main/java/com/bloodties/game/Role.java
+/workspace/src/main/java/com/bloodties/managers/DataManager.java
+/workspace/src/main/java/com/bloodties/gui/VotingGUI.java
+/workspace/src/main/java/com/bloodties/listeners/LobbyListener.java
+/workspace/src/main/java/com/bloodties/game/PlayerData.java
+/workspace/src/main/java/com/bloodties/utils/Logger.java
+/workspace/src/main/java/com/bloodties/game/GameManager.java
+/workspace/src/main/java/com/bloodties/commands/BloodTiesCommand.java
+/workspace/src/main/java/com/bloodties/game/Game.java
+/workspace/src/main/java/com/bloodties/game/GameState.java
+/workspace/src/main/java/com/bloodties/managers/SoundManager.java
