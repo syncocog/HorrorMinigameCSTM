@@ -1,0 +1,30 @@
+name: BloodTies
+version: '1.0.0'
+main: com.bloodties.BloodTiesPlugin
+api-version: '1.21'
+authors: [BloodTies Team]
+description: A social deduction minigame where players must survive and identify the Monster among them
+website: https://github.com/bloodties/blood-ties
+depend: []
+
+commands:
+  bt:
+    description: Main Blood Ties command
+    usage: /<command> [subcommand]
+    aliases: [bloodties, blood-ties]
+    permission: bloodties.play
+
+permissions:
+  bloodties.play:
+    description: Allows players to use basic Blood Ties commands
+    default: true
+  bloodties.admin:
+    description: Allows administrators to manage Blood Ties games
+    default: op
+    children:
+      bloodties.play: true
+  bloodties.staff:
+    description: Allows staff members to moderate Blood Ties games
+    default: op
+    children:
+      bloodties.play: true
