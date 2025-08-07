@@ -1,4 +1,5 @@
 /workspace/src/main/java/com/bloodties/managers/ConfigManager.java
+/workspace/src/main/java/com/bloodties/managers/GameManager.java
 /workspace/src/main/java/com/bloodties/game/GamePlayer.java
 /workspace/src/main/java/com/bloodties/BloodTiesPlugin.java
 /workspace/src/main/java/com/bloodties/game/GameMode.java

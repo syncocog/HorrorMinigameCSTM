@@ -2,482 +2,838 @@ package com.bloodties.game;
 
 import com.bloodties.BloodTiesPlugin;
 import com.bloodties.gui.VotingGUI;
+import com.bloodties.managers.ConfigManager;
+import com.bloodties.managers.DataManager;
 import com.bloodties.managers.SoundManager;
 import com.bloodties.utils.Logger;
 import org.bukkit.Bukkit;
-import org.bukkit.ChatColor;
 import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.Particle;
+import org.bukkit.Sound;
+import org.bukkit.boss.BarColor;
+import org.bukkit.boss.BarStyle;
+import org.bukkit.boss.BossBar;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.scheduler.BukkitRunnable;
-import org.bukkit.scheduler.BukkitTask;
+import org.bukkit.scoreboard.DisplaySlot;
+import org.bukkit.scoreboard.Objective;
+import org.bukkit.scoreboard.Score;
+import org.bukkit.scoreboard.Scoreboard;
+import org.bukkit.scoreboard.ScoreboardManager;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class Game {
-    
     private final BloodTiesPlugin plugin;
-    private final String gameId;
-    private final GameMode gameMode;
+    private final ConfigManager configManager;
+    private final DataManager dataManager;
+    private final SoundManager soundManager;
+    
     private GameState state;
+    private GameMode mode;
     private final Map<UUID, GamePlayer> players;
     private final Map<UUID, GamePlayer> alivePlayers;
     private final Map<UUID, GamePlayer> deadPlayers;
-    private final Map<UUID, String> votes;
+    private final Map<UUID, Integer> votes;
     private final Map<UUID, String> voteOffers;
-    private final Map<UUID, Set<UUID>> whispers;
-    private int round;
-    private int timeRemaining;
-    private BukkitTask gameTask;
-    private BukkitTask ambientTask;
-    private final VotingGUI votingGUI;
-    private GamePlayer monster;
-    private boolean monsterWon;
-    private final List<Location> spawnPoints;
-    private Location lobbyLocation;
+    private final Map<UUID, Long> cooldowns;
+    private final Map<UUID, List<UUID>> bloodPacts;
+    private final Map<UUID, Integer> soulShards;
+    private final Map<UUID, Boolean> silentOneImmunity;
     
-    public Game(BloodTiesPlugin plugin, GameMode gameMode) {
-        this.plugin = plugin;
-        this.gameId = UUID.randomUUID().toString().substring(0, 8);
-        this.gameMode = gameMode;
+    private int roundNumber;
+    private int timeLeft;
+    private BukkitRunnable gameLoop;
+    private BukkitRunnable ambientSounds;
+    private BossBar gameBossBar;
+    private Scoreboard gameScoreboard;
+    private Objective gameObjective;
+    
+    // Broadcast system
+    private final List<String> broadcastMessages;
+    private int broadcastIndex;
+    private BukkitRunnable broadcastTask;
+    
+    // Visual effects
+    private final Map<UUID, Particle> playerParticles;
+    private BukkitRunnable particleTask;
+    
+    // Auto-start system
+    private int autoStartTimer;
+    private BukkitRunnable autoStartTask;
+    
+    public Game(GameMode mode) {
+        this.plugin = BloodTiesPlugin.getInstance();
+        this.configManager = plugin.getConfigManager();
+        this.dataManager = plugin.getDataManager();
+        this.soundManager = plugin.getSoundManager();
+        
+        this.mode = mode;
         this.state = GameState.LOBBY;
         this.players = new ConcurrentHashMap<>();
         this.alivePlayers = new ConcurrentHashMap<>();
         this.deadPlayers = new ConcurrentHashMap<>();
         this.votes = new ConcurrentHashMap<>();
         this.voteOffers = new ConcurrentHashMap<>();
-        this.whispers = new ConcurrentHashMap<>();
-        this.round = 0;
-        this.timeRemaining = 0;
-        this.votingGUI = new VotingGUI(this);
-        this.monster = null;
-        this.monsterWon = false;
-        this.spawnPoints = new ArrayList<>();
-        this.lobbyLocation = null;
+        this.cooldowns = new ConcurrentHashMap<>();
+        this.bloodPacts = new ConcurrentHashMap<>();
+        this.soulShards = new ConcurrentHashMap<>();
+        this.silentOneImmunity = new ConcurrentHashMap<>();
+        
+        this.roundNumber = 0;
+        this.timeLeft = 0;
+        this.broadcastMessages = new ArrayList<>();
+        this.broadcastIndex = 0;
+        this.playerParticles = new ConcurrentHashMap<>();
+        this.autoStartTimer = configManager.getLobbyDuration();
+        
+        initializeBroadcastMessages();
+        startAutoStartTimer();
+        createBossBar();
+        createScoreboard();
     }
     
-    // Game Management
+    private void initializeBroadcastMessages() {
+        broadcastMessages.addAll(Arrays.asList(
+            "§c§l⚔ Blood Ties ⚔ §7A social deduction minigame awaits!",
+            "§c§l💀 §7Trust no one. The Monster lurks among you...",
+            "§c§l🔮 §7Use your abilities wisely. Every vote counts!",
+            "§c§l⚰ §7The hospital holds many secrets. Explore carefully.",
+            "§c§l🩸 §7Blood pacts can save you... or betray you.",
+            "§c§l👻 §7The Silent One cannot speak, but they can survive.",
+            "§c§l🧙 §7The Wizard seeks soul shards for ultimate power.",
+            "§c§l💊 §7The Healer can restore life, but at what cost?",
+            "§c§l🎭 §7The Monster can disguise, sabotage, and kill.",
+            "§c§l🔍 §7Investigate, deduce, and survive the Blood Ties!"
+        ));
+    }
+    
+    private void startAutoStartTimer() {
+        if (autoStartTask != null) {
+            autoStartTask.cancel();
+        }
+        
+        autoStartTimer = configManager.getLobbyDuration();
+        autoStartTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (state == GameState.LOBBY) {
+                    autoStartTimer--;
+                    
+                    // Update boss bar
+                    if (gameBossBar != null) {
+                        double progress = (double) autoStartTimer / configManager.getLobbyDuration();
+                        gameBossBar.setProgress(Math.max(0.0, progress));
+                        gameBossBar.setTitle("§c§lBlood Ties §7- §eAuto-start in " + autoStartTimer + "s");
+                    }
+                    
+                    // Broadcast countdown
+                    if (autoStartTimer <= 10 && autoStartTimer > 0) {
+                        broadcastMessage("§c§l⚡ §7Game starting in §e" + autoStartTimer + "s§7!");
+                        soundManager.playSoundToAll(Sound.BLOCK_NOTE_BLOCK_PLING, 1.0f, 1.0f);
+                    }
+                    
+                    // Check if enough players
+                    if (players.size() >= configManager.getMinPlayers()) {
+                        if (autoStartTimer <= 0) {
+                            start();
+                            cancel();
+                        }
+                    } else {
+                        // Reset timer if not enough players
+                        autoStartTimer = configManager.getLobbyDuration();
+                        broadcastMessage("§c§l⏰ §7Waiting for players... §e(" + players.size() + "/" + configManager.getMinPlayers() + ")");
+                    }
+                } else {
+                    cancel();
+                }
+            }
+        };
+        autoStartTask.runTaskTimer(plugin, 20L, 20L);
+    }
+    
+    private void createBossBar() {
+        gameBossBar = Bukkit.createBossBar(
+            "§c§lBlood Ties §7- §eWaiting for players...",
+            BarColor.RED,
+            BarStyle.SOLID
+        );
+        gameBossBar.setProgress(1.0);
+    }
+    
+    private void createScoreboard() {
+        ScoreboardManager manager = Bukkit.getScoreboardManager();
+        gameScoreboard = manager.getNewScoreboard();
+        gameObjective = gameScoreboard.registerNewObjective("bloodties", "dummy", "§c§lBlood Ties");
+        gameObjective.setDisplaySlot(DisplaySlot.SIDEBAR);
+    }
+    
     public void start() {
-        if (players.size() < gameMode.getMinPlayers()) {
-            broadcastMessage(ChatColor.RED + "Not enough players to start! Need at least " + gameMode.getMinPlayers());
+        if (state != GameState.LOBBY) {
             return;
         }
         
-        Logger.info("Starting Blood Ties game " + gameId + " with " + players.size() + " players");
+        Logger.info("Starting Blood Ties game with " + players.size() + " players in " + mode.getDisplayName() + " mode");
+        
+        // Cancel auto-start
+        if (autoStartTask != null) {
+            autoStartTask.cancel();
+        }
         
         // Assign roles
         assignRoles();
         
-        // Set state and start game
+        // Set state
         setState(GameState.STARTING);
+        
+        // Broadcast start
+        broadcastMessage("§c§l🎮 §7Blood Ties has begun! §e" + players.size() + " players §7enter the abandoned hospital...");
+        soundManager.playGameStart();
+        
+        // Teleport to arena
+        teleportPlayersToArena();
+        
+        // Start game loop
         startGameLoop();
+        
+        // Start ambient sounds
+        startAmbientSounds();
+        
+        // Start particle effects
+        startParticleEffects();
+        
+        // Start broadcast rotation
+        startBroadcastRotation();
     }
     
     private void assignRoles() {
-        List<GamePlayer> playerList = new ArrayList<>(players.values());
+        List<UUID> playerList = new ArrayList<>(players.keySet());
         Collections.shuffle(playerList);
         
-        // Assign Monster (always 1)
-        monster = playerList.get(0);
-        monster.setRole(Role.MONSTER);
-        
-        // Assign other roles randomly
-        for (int i = 1; i < playerList.size(); i++) {
-            GamePlayer player = playerList.get(i);
-            player.setRole(Role.getRandomSurvivorRole());
+        // Assign Monster first
+        if (!playerList.isEmpty()) {
+            UUID monsterId = playerList.remove(0);
+            GamePlayer monster = players.get(monsterId);
+            monster.setRole(Role.MONSTER);
+            alivePlayers.put(monsterId, monster);
+            
+            Player monsterPlayer = Bukkit.getPlayer(monsterId);
+            if (monsterPlayer != null) {
+                monsterPlayer.sendMessage("§c§l👹 §7You are the §cMonster§7! Disguise yourself and eliminate all players.");
+                monsterPlayer.sendMessage("§7Abilities: §c/sabotage §7- §c/kill §7- §c/disguise");
+                soundManager.playMonsterAssign(monsterPlayer);
+            }
         }
         
-        // Notify players of their roles
-        for (GamePlayer gamePlayer : players.values()) {
-            Player player = Bukkit.getPlayer(gamePlayer.getPlayerId());
-            if (player != null) {
-                sendRoleMessage(player, gamePlayer);
+        // Assign other roles
+        List<Role> availableRoles = Arrays.asList(Role.HEALER, Role.WIZARD, Role.SILENT_ONE, Role.SURVIVOR);
+        int roleIndex = 0;
+        
+        for (UUID playerId : playerList) {
+            GamePlayer player = players.get(playerId);
+            Role role = availableRoles.get(roleIndex % availableRoles.size());
+            player.setRole(role);
+            alivePlayers.put(playerId, player);
+            
+            Player bukkitPlayer = Bukkit.getPlayer(playerId);
+            if (bukkitPlayer != null) {
+                String roleMessage = getRoleAssignmentMessage(role);
+                bukkitPlayer.sendMessage(roleMessage);
+                soundManager.playRoleAssign(bukkitPlayer);
+                
+                // Give role-specific items
+                giveRoleItems(bukkitPlayer, role);
             }
+            
+            roleIndex++;
         }
     }
     
-    private void sendRoleMessage(Player player, GamePlayer gamePlayer) {
-        Role role = gamePlayer.getRole();
-        
-        player.sendMessage(ChatColor.DARK_RED + "╔══════════════════════════════════════╗");
-        player.sendMessage(ChatColor.DARK_RED + "║           " + ChatColor.WHITE + "BLOOD TIES" + ChatColor.DARK_RED + "           ║");
-        player.sendMessage(ChatColor.DARK_RED + "╠══════════════════════════════════════╣");
-        player.sendMessage(ChatColor.DARK_RED + "║  " + role.getColoredName() + ChatColor.DARK_RED + "  ║");
-        player.sendMessage(ChatColor.DARK_RED + "╠══════════════════════════════════════╣");
-        player.sendMessage(ChatColor.WHITE + role.getDescription());
-        player.sendMessage(ChatColor.DARK_RED + "╠══════════════════════════════════════╣");
-        
-        for (String ability : role.getAbilities()) {
-            player.sendMessage(ChatColor.GRAY + ability);
+    private String getRoleAssignmentMessage(Role role) {
+        switch (role) {
+            case HEALER:
+                return "§a§l💊 §7You are the §aHealer§7! Restore players and sense deception.";
+            case WIZARD:
+                return "§b§l🧙 §7You are the §bWizard§7! Cast spells and collect soul shards.";
+            case SILENT_ONE:
+                return "§8§l👻 §7You are the §8Silent One§7! Survive unnoticed and win secretly.";
+            case SURVIVOR:
+                return "§e§l🔍 §7You are a §eSurvivor§7! Investigate and form blood pacts.";
+            default:
+                return "§7You have been assigned a role.";
         }
+    }
+    
+    private void giveRoleItems(Player player, Role role) {
+        player.getInventory().clear();
         
-        player.sendMessage(ChatColor.DARK_RED + "╚══════════════════════════════════════╝");
-        
-        // Play role assignment sound
-        plugin.getSoundManager().playGameStart(player);
+        switch (role) {
+            case MONSTER:
+                player.getInventory().addItem(createItem(Material.SKELETON_SKULL, "§c§lMonster Mask", "§7Disguise yourself"));
+                player.getInventory().addItem(createItem(Material.REDSTONE, "§c§lSabotage Kit", "§7Break lights and doors"));
+                player.getInventory().addItem(createItem(Material.DIAMOND_SWORD, "§c§lKilling Blade", "§7Eliminate players"));
+                break;
+            case HEALER:
+                player.getInventory().addItem(createItem(Material.POTION, "§a§lHealing Potion", "§7Restore a player"));
+                player.getInventory().addItem(createItem(Material.EMERALD, "§a§lTruth Stone", "§7Sense lies and injuries"));
+                break;
+            case WIZARD:
+                player.getInventory().addItem(createItem(Material.BLAZE_ROD, "§b§lMagic Staff", "§7Cast detection spells"));
+                player.getInventory().addItem(createItem(Material.AMETHYST_SHARD, "§b§lSoul Shard", "§7Collect for secret win"));
+                break;
+            case SILENT_ONE:
+                player.getInventory().addItem(createItem(Material.GLASS, "§8§lSilence Charm", "§7Cannot speak but immune to votes"));
+                player.getInventory().addItem(createItem(Material.ENDER_PEARL, "§8§lShadow Step", "§7Teleport silently"));
+                break;
+            case SURVIVOR:
+                player.getInventory().addItem(createItem(Material.BOOK, "§e§lInvestigation Journal", "§7Record clues"));
+                player.getInventory().addItem(createItem(Material.RED_DYE, "§e§lBlood Pact Seal", "§7Form voting alliances"));
+                break;
+        }
+    }
+    
+    private ItemStack createItem(Material material, String name, String... lore) {
+        ItemStack item = new ItemStack(material);
+        ItemMeta meta = item.getItemMeta();
+        if (meta != null) {
+            meta.setDisplayName(name);
+            if (lore.length > 0) {
+                meta.setLore(Arrays.asList(lore));
+            }
+            item.setItemMeta(meta);
+        }
+        return item;
     }
     
     private void startGameLoop() {
-        gameTask = new BukkitRunnable() {
+        if (gameLoop != null) {
+            gameLoop.cancel();
+        }
+        
+        gameLoop = new BukkitRunnable() {
             @Override
             public void run() {
                 switch (state) {
                     case STARTING:
-                        handleStarting();
+                        handleStartingPhase();
                         break;
                     case SPAWN:
-                        handleSpawn();
+                        handleSpawnPhase();
                         break;
                     case ACTION:
-                        handleAction();
+                        handleActionPhase();
                         break;
                     case VOTING:
-                        handleVoting();
+                        handleVotingPhase();
                         break;
                     case CONSEQUENCE:
-                        handleConsequence();
+                        handleConsequencePhase();
                         break;
                     case ENDING:
-                        handleEnding();
+                        handleEndingPhase();
+                        break;
+                    default:
                         break;
                 }
             }
-        }.runTaskTimer(plugin, 20L, 20L); // Run every second
-        
-        // Start ambient sounds
-        startAmbientSounds();
+        };
+        gameLoop.runTaskTimer(plugin, 20L, 20L);
     }
     
-    private void handleStarting() {
-        if (timeRemaining <= 0) {
-            setState(GameState.SPAWN);
-            timeRemaining = 30; // 30 seconds spawn time
-            teleportPlayersToArena();
-        } else {
-            broadcastMessage(ChatColor.YELLOW + "Game starting in " + timeRemaining + " seconds...");
-            timeRemaining--;
-        }
+    private void handleStartingPhase() {
+        timeLeft = 10; // 10 second countdown
+        setState(GameState.SPAWN);
+        broadcastMessage("§c§l⚡ §7Game starting in §e10 seconds§7!");
+        soundManager.playCountdown();
     }
     
-    private void handleSpawn() {
-        if (timeRemaining <= 0) {
+    private void handleSpawnPhase() {
+        if (timeLeft <= 0) {
             setState(GameState.ACTION);
-            timeRemaining = plugin.getConfigManager().getRoundDuration();
-            round = 1;
-            broadcastMessage(ChatColor.GREEN + "The game has begun! Find the Monster before it's too late!");
-        } else {
-            if (timeRemaining % 10 == 0 || timeRemaining <= 5) {
-                broadcastMessage(ChatColor.YELLOW + "Exploration time: " + timeRemaining + " seconds");
-            }
-            timeRemaining--;
-        }
-    }
-    
-    private void handleAction() {
-        if (timeRemaining <= 0) {
-            setState(GameState.VOTING);
-            timeRemaining = plugin.getConfigManager().getVoteDuration();
+            timeLeft = configManager.getRoundDuration();
+            broadcastMessage("§c§l🎭 §7Action phase begins! §eUse your abilities wisely§7!");
+            soundManager.playActionStart();
             startVoting();
         } else {
-            if (timeRemaining % 30 == 0 || timeRemaining <= 10) {
-                broadcastMessage(ChatColor.YELLOW + "Voting begins in " + timeRemaining + " seconds");
+            timeLeft--;
+            updateScoreboard();
+            
+            if (timeLeft <= 5 && timeLeft > 0) {
+                broadcastMessage("§c§l⏰ §7Spawn phase ending in §e" + timeLeft + "s§7!");
+                soundManager.playCountdown();
             }
-            timeRemaining--;
         }
     }
     
-    private void handleVoting() {
-        if (timeRemaining <= 0) {
+    private void handleActionPhase() {
+        if (timeLeft <= 0) {
+            setState(GameState.VOTING);
+            timeLeft = configManager.getVoteDuration();
+            broadcastMessage("§c§l🗳 §7Voting phase begins! §eVote for sacrifice§7!");
+            soundManager.playVoteStart();
+            openVotingGUI();
+        } else {
+            timeLeft--;
+            updateScoreboard();
+            
+            // Check win conditions every 30 seconds
+            if (timeLeft % 30 == 0) {
+                checkWinConditions();
+            }
+            
+            // Ambient effects
+            if (timeLeft % 60 == 0) {
+                soundManager.playAmbientHorror();
+            }
+        }
+    }
+    
+    private void handleVotingPhase() {
+        if (timeLeft <= 0) {
             setState(GameState.CONSEQUENCE);
-            timeRemaining = 10; // 10 seconds for consequence
+            timeLeft = 10;
             processVotes();
         } else {
-            if (timeRemaining % 10 == 0 || timeRemaining <= 5) {
-                broadcastMessage(ChatColor.YELLOW + "Voting ends in " + timeRemaining + " seconds");
+            timeLeft--;
+            updateScoreboard();
+            
+            if (timeLeft <= 10 && timeLeft > 0) {
+                broadcastMessage("§c§l⏰ §7Voting ends in §e" + timeLeft + "s§7!");
+                soundManager.playCountdown();
             }
-            timeRemaining--;
         }
     }
     
-    private void handleConsequence() {
-        if (timeRemaining <= 0) {
-            // Check win conditions
-            if (checkWinConditions()) {
-                setState(GameState.ENDING);
-                timeRemaining = 10;
-            } else {
-                // Start next round
-                setState(GameState.ACTION);
-                timeRemaining = plugin.getConfigManager().getRoundDuration();
-                round++;
+    private void handleConsequencePhase() {
+        if (timeLeft <= 0) {
+            // Check if game should continue
+            if (shouldContinueGame()) {
                 resetForNewRound();
+                setState(GameState.ACTION);
+                timeLeft = configManager.getRoundDuration();
+                broadcastMessage("§c§l🔄 §7New round begins! §eThe cycle continues...§7!");
+                soundManager.playRoundStart();
+            } else {
+                endGame();
             }
         } else {
-            timeRemaining--;
+            timeLeft--;
+            updateScoreboard();
         }
     }
     
-    private void handleEnding() {
-        if (timeRemaining <= 0) {
-            endGame();
-        } else {
-            timeRemaining--;
-        }
+    private void handleEndingPhase() {
+        // Game ending logic
+        setState(GameState.ENDING);
     }
     
     private void startVoting() {
+        // Initialize voting
         votes.clear();
         voteOffers.clear();
-        
-        // Open voting GUI for all players
-        for (GamePlayer gamePlayer : alivePlayers.values()) {
-            Player player = Bukkit.getPlayer(gamePlayer.getPlayerId());
+        broadcastMessage("§c§l🗳 §7Voting system activated! §eUse /bt vote or the GUI§7!");
+    }
+    
+    private void openVotingGUI() {
+        for (UUID playerId : alivePlayers.keySet()) {
+            Player player = Bukkit.getPlayer(playerId);
             if (player != null) {
-                votingGUI.open(player);
-                plugin.getSoundManager().playVoteStart(player);
+                new VotingGUI(this).open(player);
             }
         }
-        
-        broadcastMessage(ChatColor.GOLD + "Voting phase has begun! Vote for who you think is the Monster!");
     }
     
     private void processVotes() {
-        // Count votes
-        Map<String, Integer> voteCounts = new HashMap<>();
-        for (String target : votes.values()) {
-            voteCounts.put(target, voteCounts.getOrDefault(target, 0) + 1);
-        }
-        
-        // Find highest voted player(s)
-        int maxVotes = voteCounts.values().stream().mapToInt(Integer::intValue).max().orElse(0);
-        List<String> highestVoted = new ArrayList<>();
-        
-        for (Map.Entry<String, Integer> entry : voteCounts.entrySet()) {
-            if (entry.getValue() == maxVotes) {
-                highestVoted.add(entry.getKey());
+        if (votes.isEmpty()) {
+            broadcastMessage("§c§l❌ §7No votes cast! §eRandom player will be sacrificed§7!");
+            List<UUID> aliveList = new ArrayList<>(alivePlayers.keySet());
+            if (!aliveList.isEmpty()) {
+                UUID randomPlayer = aliveList.get(new Random().nextInt(aliveList.size()));
+                sacrificePlayer(randomPlayer, "§c§l🎲 §7Random sacrifice");
             }
+            return;
         }
         
-        // Process sacrifice
-        if (!highestVoted.isEmpty() && maxVotes > 0) {
-            String sacrificedPlayer = highestVoted.get(0);
-            GamePlayer sacrificed = getPlayerByName(sacrificedPlayer);
+        // Count votes for each player
+        Map<UUID, Integer> voteCounts = new HashMap<>();
+        for (Map.Entry<UUID, Integer> entry : votes.entrySet()) {
+            UUID voterId = entry.getKey();
+            int targetHash = entry.getValue();
             
-            if (sacrificed != null && sacrificed.isAlive()) {
-                sacrificePlayer(sacrificed);
+            // Find the player with this hash code
+            for (UUID playerId : alivePlayers.keySet()) {
+                if (playerId.hashCode() == targetHash) {
+                    voteCounts.put(playerId, voteCounts.getOrDefault(playerId, 0) + 1);
+                    break;
+                }
             }
-        } else {
-            broadcastMessage(ChatColor.YELLOW + "No one was sacrificed this round.");
+        }
+        
+        // Find player with most votes
+        UUID mostVoted = null;
+        int maxVotes = 0;
+        
+        for (Map.Entry<UUID, Integer> entry : voteCounts.entrySet()) {
+            if (entry.getValue() > maxVotes) {
+                maxVotes = entry.getValue();
+                mostVoted = entry.getKey();
+            }
+        }
+        
+        if (mostVoted != null) {
+            Player sacrificed = Bukkit.getPlayer(mostVoted);
+            if (sacrificed != null) {
+                broadcastMessage("§c§l⚰ §7" + sacrificed.getName() + " §7has been sacrificed by vote!");
+                sacrificePlayer(mostVoted, "§c§l🗳 §7Sacrificed by vote");
+            }
         }
     }
     
-    public Map<UUID, String> getVotes() {
-        return votes;
-    }
-    
-    public Map<UUID, GamePlayer> getDeadPlayers() {
-        return deadPlayers;
-    }
-    
-
-    
-    private void sacrificePlayer(GamePlayer gamePlayer) {
-        gamePlayer.setAlive(false);
-        alivePlayers.remove(gamePlayer.getPlayerId());
-        deadPlayers.put(gamePlayer.getPlayerId(), gamePlayer);
+    private void sacrificePlayer(UUID playerId, String reason) {
+        GamePlayer gamePlayer = alivePlayers.get(playerId);
+        if (gamePlayer == null) return;
         
-        Player player = Bukkit.getPlayer(gamePlayer.getPlayerId());
+        Player player = Bukkit.getPlayer(playerId);
         if (player != null) {
-            // Play sacrifice animation and sound
-            plugin.getSoundManager().playSacrifice(player.getLocation());
+            // Visual effects
+            player.getWorld().spawnParticle(Particle.BLOCK_CRACK, player.getLocation(), 50, Material.REDSTONE_BLOCK.createBlockData());
+            player.getWorld().spawnParticle(Particle.EXPLOSION, player.getLocation(), 1);
             
-            // Kill the player
-            player.setHealth(0);
+            // Sound effects
+            soundManager.playSacrifice(player);
             
-            // Reveal their role
-            broadcastMessage(ChatColor.RED + "☠ " + gamePlayer.getName() + " was sacrificed!");
-            broadcastMessage(ChatColor.GRAY + "They were: " + gamePlayer.getRole().getColoredName());
+            // Kill player
+            player.setHealth(0.0);
             
-            // Award karma
-            if (gamePlayer.isMonster()) {
-                // Award karma to players who voted correctly
-                for (Map.Entry<UUID, String> vote : votes.entrySet()) {
-                    if (vote.getValue().equals(gamePlayer.getName())) {
-                        GamePlayer voter = players.get(vote.getKey());
-                        if (voter != null) {
-                            voter.incrementCorrectVotes();
-                            plugin.getDataManager().addKarma(voter.getPlayerId(), 
-                                plugin.getConfigManager().getKarmaVoteMonster());
-                        }
-                    }
-                }
-            } else {
-                // Penalize players who voted incorrectly
-                for (Map.Entry<UUID, String> vote : votes.entrySet()) {
-                    if (vote.getValue().equals(gamePlayer.getName())) {
-                        GamePlayer voter = players.get(vote.getKey());
-                        if (voter != null) {
-                            plugin.getDataManager().addKarma(voter.getPlayerId(), 
-                                plugin.getConfigManager().getKarmaVoteInnocent());
-                        }
-                    }
-                }
-            }
+            // Broadcast
+            broadcastMessage(reason + " §7- §c" + player.getName() + " §7has fallen!");
         }
+        
+        // Move to dead players
+        alivePlayers.remove(playerId);
+        deadPlayers.put(playerId, gamePlayer);
+        
+        // Update karma
+        updateKarmaForSacrifice(playerId, gamePlayer.getRole());
+        
+        // Check win conditions
+        checkWinConditions();
     }
     
-    public boolean checkWinConditions() {
-        // Check if Monster won
-        if (alivePlayers.size() <= 1) {
-            monsterWon = true;
-            return true;
+    private void updateKarmaForSacrifice(UUID playerId, Role role) {
+        // This would be implemented based on voting patterns
+        // For now, just add some karma for participation
+        dataManager.addKarma(playerId, 5);
+    }
+    
+    private boolean shouldContinueGame() {
+        // Check if enough players remain
+        if (alivePlayers.size() < 2) {
+            return false;
         }
         
-        // Check if Monster was eliminated
-        if (!monster.isAlive()) {
-            monsterWon = false;
-            return true;
+        // Check if Monster is still alive
+        boolean monsterAlive = alivePlayers.values().stream()
+            .anyMatch(p -> p.getRole() == Role.MONSTER);
+        
+        if (!monsterAlive) {
+            return false;
         }
         
-        // Check for secret win conditions
-        for (GamePlayer player : alivePlayers.values()) {
-            if (player.hasWonSecretPath()) {
-                // Secret win condition met
-                return true;
-            }
-        }
-        
-        return false;
+        return true;
     }
     
     private void resetForNewRound() {
-        // Reset cooldowns for new round
-        for (GamePlayer player : alivePlayers.values()) {
-            player.resetCooldowns();
-        }
-        
-        // Clear votes
+        roundNumber++;
         votes.clear();
         voteOffers.clear();
         
-        broadcastMessage(ChatColor.GREEN + "Round " + round + " has begun!");
+        // Reset cooldowns
+        cooldowns.clear();
+        
+        // Reset Silent One immunity
+        silentOneImmunity.clear();
+        
+        broadcastMessage("§c§l🔄 §7Round " + roundNumber + " §7begins!");
     }
     
-    private void endGame() {
-        setState(GameState.FINISHED);
+    public void endGame() {
+        setState(GameState.ENDING);
         
-        // Stop tasks
-        if (gameTask != null) {
-            gameTask.cancel();
-        }
-        if (ambientTask != null) {
-            ambientTask.cancel();
-        }
-        
-        // Announce winner
-        if (monsterWon) {
-            broadcastMessage(ChatColor.DARK_RED + "☠ The Monster has won! ☠");
-            if (monster != null) {
-                broadcastMessage(ChatColor.RED + "The Monster was: " + monster.getName());
-            }
-        } else {
-            broadcastMessage(ChatColor.GREEN + "☀ The Survivors have won! ☀");
-        }
+        // Determine winner
+        String winner = determineWinner();
+        broadcastMessage("§c§l🏆 §7" + winner);
         
         // Save statistics
         saveGameStats();
         
-        // Return players to lobby
+        // Clean up
+        cleanup();
+        
+        // Teleport to lobby
         teleportPlayersToLobby();
         
-        // Clean up
-        plugin.getGameManager().removeGame(this);
+        setState(GameState.FINISHED);
     }
     
-    private void saveGameStats() {
-        for (GamePlayer gamePlayer : players.values()) {
-            // Increment games played
-            plugin.getDataManager().incrementGamesPlayed(gamePlayer.getPlayerId());
-            
-            // Save player stats
-            gamePlayer.saveStats();
-            
-            // Award karma for surviving
-            if (gamePlayer.isAlive()) {
-                plugin.getDataManager().addKarma(gamePlayer.getPlayerId(), 
-                    plugin.getConfigManager().getKarmaSurviveRound());
-            }
+    private String determineWinner() {
+        // Check if Monster won
+        boolean monsterAlive = alivePlayers.values().stream()
+            .anyMatch(p -> p.getRole() == Role.MONSTER);
+        
+        if (monsterAlive && alivePlayers.size() == 1) {
+            return "§c§l👹 Monster wins! §7All players eliminated!";
         }
         
-        // Award wins
-        if (monsterWon && monster != null) {
-            plugin.getDataManager().incrementGamesWon(monster.getPlayerId());
-            plugin.getDataManager().incrementRoleWins(monster.getPlayerId(), "monster");
-        } else {
-            for (GamePlayer player : alivePlayers.values()) {
-                if (!player.isMonster()) {
-                    plugin.getDataManager().incrementGamesWon(player.getPlayerId());
-                    plugin.getDataManager().incrementRoleWins(player.getPlayerId(), 
-                        player.getRole().name().toLowerCase());
+        // Check if Survivors won
+        if (!monsterAlive) {
+            return "§a§l🏥 Survivors win! §7Monster has been eliminated!";
+        }
+        
+        // Check secret wins
+        for (Map.Entry<UUID, Integer> entry : soulShards.entrySet()) {
+            if (entry.getValue() >= 3) {
+                Player wizard = Bukkit.getPlayer(entry.getKey());
+                if (wizard != null) {
+                    return "§b§l🧙 Wizard wins! §7" + wizard.getName() + " §7collected 3 soul shards!";
                 }
             }
         }
+        
+        return "§8§l👻 Silent One wins! §7Survived unnoticed!";
+    }
+    
+    private void saveGameStats() {
+        for (Map.Entry<UUID, GamePlayer> entry : players.entrySet()) {
+            UUID playerId = entry.getKey();
+            GamePlayer gamePlayer = entry.getValue();
+            
+            // Update games played
+            dataManager.incrementGamesPlayed(playerId);
+            
+            // Update role wins
+            if (isWinner(playerId, gamePlayer.getRole())) {
+                dataManager.incrementGamesWon(playerId);
+                dataManager.incrementRoleWins(playerId, gamePlayer.getRole().name().toLowerCase());
+            }
+            
+            // Update kills
+            dataManager.incrementKills(playerId, gamePlayer.getKills());
+            
+            // Update votes
+            dataManager.incrementVotes(playerId, gamePlayer.getVotes());
+        }
+    }
+    
+    private boolean isWinner(UUID playerId, Role role) {
+        // This would check if the player's team won
+        // Simplified for now
+        return alivePlayers.containsKey(playerId);
+    }
+    
+    private void cleanup() {
+        // Cancel tasks
+        if (gameLoop != null) {
+            gameLoop.cancel();
+        }
+        if (ambientSounds != null) {
+            ambientSounds.cancel();
+        }
+        if (particleTask != null) {
+            particleTask.cancel();
+        }
+        if (broadcastTask != null) {
+            broadcastTask.cancel();
+        }
+        
+        // Remove boss bar
+        if (gameBossBar != null) {
+            gameBossBar.removeAll();
+        }
+        
+        // Clear collections
+        players.clear();
+        alivePlayers.clear();
+        deadPlayers.clear();
+        votes.clear();
+        voteOffers.clear();
+        cooldowns.clear();
+        bloodPacts.clear();
+        soulShards.clear();
+        silentOneImmunity.clear();
     }
     
     private void startAmbientSounds() {
-        ambientTask = new BukkitRunnable() {
+        if (ambientSounds != null) {
+            ambientSounds.cancel();
+        }
+        
+        ambientSounds = new BukkitRunnable() {
             @Override
             public void run() {
-                if (state.isActive()) {
-                    // Play random ambient sounds
-                    for (GamePlayer gamePlayer : alivePlayers.values()) {
-                        Player player = Bukkit.getPlayer(gamePlayer.getPlayerId());
+                if (state == GameState.ACTION || state == GameState.VOTING) {
+                    soundManager.playAmbientHorror();
+                }
+            }
+        };
+        ambientSounds.runTaskTimer(plugin, 200L, 200L); // Every 10 seconds
+    }
+    
+    private void startParticleEffects() {
+        if (particleTask != null) {
+            particleTask.cancel();
+        }
+        
+        particleTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (state == GameState.ACTION || state == GameState.VOTING) {
+                    // Add ambient particles
+                    for (UUID playerId : alivePlayers.keySet()) {
+                        Player player = Bukkit.getPlayer(playerId);
                         if (player != null) {
-                            plugin.getSoundManager().playAmbientHorror(player.getLocation());
-                            
-                            // Play heartbeat near Monster
-                            if (monster != null && monster.isAlive()) {
-                                Player monsterPlayer = Bukkit.getPlayer(monster.getPlayerId());
-                                if (monsterPlayer != null && player.getLocation().distance(monsterPlayer.getLocation()) < 10) {
-                                    plugin.getSoundManager().playHeartbeat(player);
-                                }
+                            // Random particles around players
+                            if (Math.random() < 0.1) { // 10% chance
+                                player.getWorld().spawnParticle(Particle.SMOKE, player.getLocation(), 5, 0.5, 0.5, 0.5, 0.01);
                             }
                         }
                     }
                 }
             }
-        }.runTaskTimer(plugin, 100L, 100L); // Every 5 seconds
+        };
+        particleTask.runTaskTimer(plugin, 40L, 40L); // Every 2 seconds
     }
     
-    // Player Management
-    public void addPlayer(Player player) {
-        GamePlayer gamePlayer = new GamePlayer(player);
-        players.put(player.getUniqueId(), gamePlayer);
-        alivePlayers.put(player.getUniqueId(), gamePlayer);
+    private void startBroadcastRotation() {
+        if (broadcastTask != null) {
+            broadcastTask.cancel();
+        }
         
-        // Update player name in data
-        plugin.getDataManager().updatePlayerName(player.getUniqueId(), player.getName());
+        broadcastTask = new BukkitRunnable() {
+            @Override
+            public void run() {
+                if (state == GameState.ACTION || state == GameState.VOTING) {
+                    if (broadcastIndex < broadcastMessages.size()) {
+                        broadcastMessage(broadcastMessages.get(broadcastIndex));
+                        broadcastIndex++;
+                    } else {
+                        broadcastIndex = 0;
+                    }
+                }
+            }
+        };
+        broadcastTask.runTaskTimer(plugin, 600L, 600L); // Every 30 seconds
+    }
+    
+    private void updateScoreboard() {
+        if (gameObjective == null) return;
         
-        broadcastMessage(ChatColor.GREEN + player.getName() + " joined the game!");
+        gameObjective.getScoreboard().resetScores("§1");
+        gameObjective.getScoreboard().resetScores("§2");
+        gameObjective.getScoreboard().resetScores("§3");
+        gameObjective.getScoreboard().resetScores("§4");
+        gameObjective.getScoreboard().resetScores("§5");
+        gameObjective.getScoreboard().resetScores("§6");
+        gameObjective.getScoreboard().resetScores("§7");
+        gameObjective.getScoreboard().resetScores("§8");
+        gameObjective.getScoreboard().resetScores("§9");
+        gameObjective.getScoreboard().resetScores("§a");
+        gameObjective.getScoreboard().resetScores("§b");
+        gameObjective.getScoreboard().resetScores("§c");
+        gameObjective.getScoreboard().resetScores("§d");
+        gameObjective.getScoreboard().resetScores("§e");
+        gameObjective.getScoreboard().resetScores("§f");
         
-        // Check if we can start
-        if (state == GameState.LOBBY && players.size() >= gameMode.getMinPlayers() && 
-            plugin.getConfigManager().isAutoStart()) {
-            start();
+        int score = 10;
+        
+        // Game state
+        Score stateScore = gameObjective.getScore("§c§lState: §7" + state.getDisplayName());
+        stateScore.setScore(score--);
+        
+        // Round
+        Score roundScore = gameObjective.getScore("§e§lRound: §7" + roundNumber);
+        roundScore.setScore(score--);
+        
+        // Time left
+        Score timeScore = gameObjective.getScore("§b§lTime: §7" + timeLeft + "s");
+        timeScore.setScore(score--);
+        
+        // Players alive
+        Score aliveScore = gameObjective.getScore("§a§lAlive: §7" + alivePlayers.size());
+        aliveScore.setScore(score--);
+        
+        // Players dead
+        Score deadScore = gameObjective.getScore("§c§lDead: §7" + deadPlayers.size());
+        deadScore.setScore(score--);
+        
+        // Mode
+        Score modeScore = gameObjective.getScore("§6§lMode: §7" + mode.getDisplayName());
+        modeScore.setScore(score--);
+        
+        // Update for all players
+        for (UUID playerId : players.keySet()) {
+            Player player = Bukkit.getPlayer(playerId);
+            if (player != null) {
+                player.setScoreboard(gameScoreboard);
+            }
         }
     }
     
-    public void removePlayer(Player player) {
-        GamePlayer gamePlayer = players.get(player.getUniqueId());
+    public void addPlayer(UUID playerId, String playerName) {
+        GamePlayer gamePlayer = new GamePlayer(playerId, playerName);
+        players.put(playerId, gamePlayer);
+        
+        // Add to boss bar
+        if (gameBossBar != null) {
+            Player player = Bukkit.getPlayer(playerId);
+            if (player != null) {
+                gameBossBar.addPlayer(player);
+            }
+        }
+        
+        // Update auto-start timer
+        if (players.size() >= configManager.getMinPlayers()) {
+            if (autoStartTimer > 10) {
+                autoStartTimer = 10; // Quick start when enough players
+            }
+        }
+        
+        broadcastMessage("§a§l➕ §7" + playerName + " §7joined the game! §e(" + players.size() + "/" + configManager.getMaxPlayers() + ")");
+        soundManager.playPlayerJoin();
+    }
+    
+    public void removePlayer(UUID playerId) {
+        GamePlayer gamePlayer = players.get(playerId);
         if (gamePlayer != null) {
-            alivePlayers.remove(player.getUniqueId());
-            deadPlayers.remove(player.getUniqueId());
-            players.remove(player.getUniqueId());
+            String playerName = gamePlayer.getName();
             
-            broadcastMessage(ChatColor.RED + player.getName() + " left the game!");
+            players.remove(playerId);
+            alivePlayers.remove(playerId);
+            deadPlayers.remove(playerId);
+            votes.remove(playerId);
+            voteOffers.remove(playerId);
+            cooldowns.remove(playerId);
+            bloodPacts.remove(playerId);
+            soulShards.remove(playerId);
+            silentOneImmunity.remove(playerId);
+            
+            // Remove from boss bar
+            if (gameBossBar != null) {
+                Player player = Bukkit.getPlayer(playerId);
+                if (player != null) {
+                    gameBossBar.removePlayer(player);
+                }
+            }
+            
+            broadcastMessage("§c§l➖ §7" + playerName + " §7left the game!");
+            soundManager.playPlayerLeave();
             
             // Check if game should end
-            if (alivePlayers.size() < 2) {
+            if (players.size() < 2 && state != GameState.LOBBY) {
                 endGame();
             }
         }
@@ -496,99 +852,174 @@ public class Game {
         return null;
     }
     
-    // Voting System
-    public void castVote(UUID voterId, String targetName) {
-        GamePlayer voter = players.get(voterId);
-        if (voter == null || !voter.isAlive()) return;
-        
-        GamePlayer target = getPlayerByName(targetName);
-        if (target == null || !target.isAlive()) return;
-        
-        votes.put(voterId, targetName);
-        voter.incrementVotes();
-        
-        Player player = Bukkit.getPlayer(voterId);
-        if (player != null) {
-            plugin.getSoundManager().playVoteCast(player);
-            player.sendMessage(ChatColor.GREEN + "You voted for " + targetName);
-        }
-    }
-    
-    public void offerVote(UUID offererId, String targetName, String info) {
-        voteOffers.put(offererId, targetName + ":" + info);
-    }
-    
-    public void acceptVoteOffer(UUID offererId, UUID accepterId) {
-        String offer = voteOffers.get(offererId);
-        if (offer != null) {
-            String[] parts = offer.split(":", 2);
-            if (parts.length == 2) {
-                castVote(accepterId, parts[0]);
-                // Transfer the vote info
-                Player offerer = Bukkit.getPlayer(offererId);
-                Player accepter = Bukkit.getPlayer(accepterId);
-                if (offerer != null && accepter != null) {
-                    accepter.sendMessage(ChatColor.YELLOW + "Vote trade accepted! Info: " + parts[1]);
-                }
+    public void castVote(UUID voterId, UUID targetId) {
+        if (state != GameState.VOTING) {
+            Player voter = Bukkit.getPlayer(voterId);
+            if (voter != null) {
+                voter.sendMessage("§c§l❌ §7Voting is not currently active!");
             }
+            return;
+        }
+        
+        if (!alivePlayers.containsKey(voterId)) {
+            Player voter = Bukkit.getPlayer(voterId);
+            if (voter != null) {
+                voter.sendMessage("§c§l❌ §7You cannot vote while dead!");
+            }
+            return;
+        }
+        
+        if (!alivePlayers.containsKey(targetId)) {
+            Player voter = Bukkit.getPlayer(voterId);
+            if (voter != null) {
+                voter.sendMessage("§c§l❌ §7You cannot vote for a dead player!");
+            }
+            return;
+        }
+        
+        votes.put(voterId, targetId.hashCode());
+        
+        Player voter = Bukkit.getPlayer(voterId);
+        Player target = Bukkit.getPlayer(targetId);
+        
+        if (voter != null && target != null) {
+            voter.sendMessage("§a§l✅ §7You voted for §e" + target.getName() + "§7!");
+            soundManager.playVoteCast(voter);
         }
     }
     
-    // Whisper System
+    public void offerVote(UUID sellerId, String info) {
+        if (state != GameState.VOTING) {
+            Player seller = Bukkit.getPlayer(sellerId);
+            if (seller != null) {
+                seller.sendMessage("§c§l❌ §7Voting is not currently active!");
+            }
+            return;
+        }
+        
+        voteOffers.put(sellerId, info);
+        
+        Player seller = Bukkit.getPlayer(sellerId);
+        if (seller != null) {
+            seller.sendMessage("§a§l💰 §7Your vote is now for sale: §e" + info);
+            broadcastMessage("§a§l💰 §7" + seller.getName() + " §7is selling their vote: §e" + info);
+        }
+    }
+    
+    public void acceptVoteOffer(UUID buyerId, UUID sellerId) {
+        if (!voteOffers.containsKey(sellerId)) {
+            Player buyer = Bukkit.getPlayer(buyerId);
+            if (buyer != null) {
+                buyer.sendMessage("§c§l❌ §7That vote offer is no longer available!");
+            }
+            return;
+        }
+        
+        String info = voteOffers.get(sellerId);
+        votes.put(sellerId, buyerId.hashCode()); // Seller votes for buyer
+        
+        Player buyer = Bukkit.getPlayer(buyerId);
+        Player seller = Bukkit.getPlayer(sellerId);
+        
+        if (buyer != null) {
+            buyer.sendMessage("§a§l✅ §7You bought " + seller.getName() + "'s vote: §e" + info);
+        }
+        if (seller != null) {
+            seller.sendMessage("§a§l💰 §7" + buyer.getName() + " §7bought your vote!");
+        }
+        
+        voteOffers.remove(sellerId);
+    }
+    
     public void sendWhisper(UUID senderId, UUID receiverId, String message) {
         Player sender = Bukkit.getPlayer(senderId);
         Player receiver = Bukkit.getPlayer(receiverId);
         
-        if (sender != null && receiver != null) {
-            sender.sendMessage(ChatColor.GRAY + "→ " + receiver.getName() + ": " + message);
-            receiver.sendMessage(ChatColor.GRAY + "← " + sender.getName() + ": " + message);
-            
-            // Add to whisper history
-            whispers.computeIfAbsent(senderId, k -> new HashSet<>()).add(receiverId);
-            whispers.computeIfAbsent(receiverId, k -> new HashSet<>()).add(senderId);
-            
-            // Play whisper sound
-            plugin.getSoundManager().playWhisper(sender);
-            plugin.getSoundManager().playWhisper(receiver);
+        if (sender == null || receiver == null) {
+            return;
         }
+        
+        // Check if Silent One is trying to speak
+        GamePlayer senderGame = getPlayer(senderId);
+        if (senderGame != null && senderGame.getRole() == Role.SILENT_ONE) {
+            sender.sendMessage("§c§l🤐 §7You cannot speak as the Silent One!");
+            return;
+        }
+        
+        sender.sendMessage("§8§l[To " + receiver.getName() + "] §7" + message);
+        receiver.sendMessage("§8§l[From " + sender.getName() + "] §7" + message);
+        
+        soundManager.playWhisper(sender);
+        soundManager.playWhisper(receiver);
     }
     
-    // Utility Methods
     public void broadcastMessage(String message) {
-        for (GamePlayer gamePlayer : players.values()) {
-            Player player = Bukkit.getPlayer(gamePlayer.getPlayerId());
+        for (UUID playerId : players.keySet()) {
+            Player player = Bukkit.getPlayer(playerId);
             if (player != null) {
-                player.sendMessage(ChatColor.DARK_RED + "[BloodTies] " + ChatColor.RESET + message);
+                player.sendMessage(message);
             }
         }
+        
+        // Also log to console
+        Logger.info("[Broadcast] " + message.replaceAll("§[0-9a-fk-or]", ""));
     }
     
     public void setState(GameState newState) {
         this.state = newState;
-        Logger.debug("Game " + gameId + " state changed to: " + newState.getDisplayName());
+        
+        // Update boss bar title
+        if (gameBossBar != null) {
+            gameBossBar.setTitle("§c§lBlood Ties §7- §e" + newState.getDisplayName());
+        }
+        
+        // Update scoreboard
+        updateScoreboard();
     }
     
     private void teleportPlayersToArena() {
-        // Implementation for teleporting players to arena spawn points
-        // This would use the spawnPoints list
+        // This would teleport players to the arena location
+        // For now, just broadcast
+        broadcastMessage("§c§l🏥 §7Players have been transported to the abandoned hospital!");
     }
     
     private void teleportPlayersToLobby() {
-        // Implementation for teleporting players back to lobby
-        // This would use the lobbyLocation
+        // This would teleport players back to lobby
+        broadcastMessage("§a§l🏠 §7Players have been returned to the lobby!");
     }
     
-    // Getters
-    public String getGameId() {
-        return gameId;
+    public void checkWinConditions() {
+        // Check if Monster won
+        boolean monsterAlive = alivePlayers.values().stream()
+            .anyMatch(p -> p.getRole() == Role.MONSTER);
+        
+        if (monsterAlive && alivePlayers.size() == 1) {
+            endGame();
+            return;
+        }
+        
+        // Check if Survivors won
+        if (!monsterAlive) {
+            endGame();
+            return;
+        }
+        
+        // Check secret wins
+        for (Map.Entry<UUID, Integer> entry : soulShards.entrySet()) {
+            if (entry.getValue() >= 3) {
+                endGame();
+                return;
+            }
+        }
     }
     
-    public GameMode getGameMode() {
-        return gameMode;
-    }
-    
+    // Getters for other classes
     public GameState getState() {
         return state;
+    }
+    
+    public GameMode getMode() {
+        return mode;
     }
     
     public Map<UUID, GamePlayer> getPlayers() {
@@ -599,23 +1030,27 @@ public class Game {
         return alivePlayers;
     }
     
-    public int getRound() {
-        return round;
+    public Map<UUID, GamePlayer> getDeadPlayers() {
+        return deadPlayers;
     }
     
-    public int getTimeRemaining() {
-        return timeRemaining;
+    public Map<UUID, Integer> getVotes() {
+        return votes;
     }
     
-    public GamePlayer getMonster() {
-        return monster;
+    public int getRoundNumber() {
+        return roundNumber;
     }
     
-    public boolean isMonsterWon() {
-        return monsterWon;
+    public int getTimeLeft() {
+        return timeLeft;
     }
     
-    public VotingGUI getVotingGUI() {
-        return votingGUI;
+    public BossBar getBossBar() {
+        return gameBossBar;
+    }
+    
+    public Scoreboard getScoreboard() {
+        return gameScoreboard;
     }
 }

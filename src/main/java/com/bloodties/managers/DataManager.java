@@ -8,6 +8,9 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.Player;
 
 import java.util.HashMap;
+import java.util.AbstractMap;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -162,5 +165,32 @@ public class DataManager {
                 break;
         }
         savePlayerData(data);
+    }
+    
+    public void incrementKills(UUID playerId, int kills) {
+        PlayerData data = getPlayerData(playerId);
+        data.setTotalKills(data.getTotalKills() + kills);
+        savePlayerData(data);
+    }
+    
+    public void incrementVotes(UUID playerId, int votes) {
+        PlayerData data = getPlayerData(playerId);
+        data.setTotalVotes(data.getTotalVotes() + votes);
+        savePlayerData(data);
+    }
+    
+    public List<Map.Entry<String, Integer>> getTopPlayersByKarma(int count) {
+        List<Map.Entry<String, Integer>> topPlayers = new ArrayList<>();
+        
+        for (Map.Entry<UUID, PlayerData> entry : playerDataCache.entrySet()) {
+            PlayerData data = entry.getValue();
+            topPlayers.add(new AbstractMap.SimpleEntry<>(data.getName(), data.getKarma()));
+        }
+        
+        // Sort by karma (descending)
+        topPlayers.sort((a, b) -> Integer.compare(b.getValue(), a.getValue()));
+        
+        // Return top N players
+        return topPlayers.subList(0, Math.min(count, topPlayers.size()));
     }
 }

@@ -166,4 +166,92 @@ public class SoundManager {
     public void clearHeartbeatTimer(UUID playerId) {
         lastHeartbeatTime.remove(playerId);
     }
+    
+    // Additional sound methods for the enhanced Game class
+    public void playSoundToAll(Sound sound, float volume, float pitch) {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playSound(player, sound, volume, pitch);
+        }
+    }
+    
+    public void playGameStart() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playGameStart(player);
+        }
+    }
+    
+    public void playMonsterAssign(Player player) {
+        playSound(player, Sound.ENTITY_ENDERMAN_TELEPORT, 1.0f, 0.6f);
+        playSound(player, Sound.ENTITY_GHAST_SCREAM, 0.5f, 1.5f);
+    }
+    
+    public void playRoleAssign(Player player) {
+        playSound(player, Sound.BLOCK_BELL_USE, 0.8f, 1.2f);
+        playSound(player, Sound.ENTITY_PLAYER_LEVELUP, 0.8f, 1.0f);
+    }
+    
+    public void playCountdown() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playSound(player, Sound.BLOCK_NOTE_BLOCK_PLING, 1.0f, 1.0f);
+        }
+    }
+    
+    public void playActionStart() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playSound(player, Sound.ENTITY_ENDER_DRAGON_GROWL, 1.0f, 0.8f);
+        }
+    }
+    
+    public void playVoteStart() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playVoteStart(player);
+        }
+    }
+    
+    public void playAmbientHorror() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playAmbientHorror(player.getLocation());
+        }
+    }
+    
+    public void playRoundStart() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playSound(player, Sound.BLOCK_BELL_USE, 0.8f, 1.2f);
+        }
+    }
+    
+    public void playPlayerJoin() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playSound(player, Sound.ENTITY_PLAYER_LEVELUP, 0.6f, 1.2f);
+        }
+    }
+    
+    public void playPlayerLeave() {
+        if (!plugin.getConfigManager().isSoundEnabled()) return;
+        
+        for (Player player : plugin.getServer().getOnlinePlayers()) {
+            playSound(player, Sound.ENTITY_PLAYER_DEATH, 0.4f, 1.5f);
+        }
+    }
+    
+    public void playSacrifice(Player player) {
+        playSound(player, Sound.ENTITY_PLAYER_DEATH, 1.0f, 0.7f);
+        playSound(player, Sound.BLOCK_GLASS_BREAK, 0.8f, 0.5f);
+    }
 }

@@ -30,8 +30,12 @@ public class GamePlayer {
     private GamePlayer bloodPactPartner;
     
     public GamePlayer(Player player) {
-        this.playerId = player.getUniqueId();
-        this.name = player.getName();
+        this(player.getUniqueId(), player.getName());
+    }
+    
+    public GamePlayer(UUID playerId, String name) {
+        this.playerId = playerId;
+        this.name = name;
         this.role = Role.SURVIVOR;
         this.isAlive = true;
         this.isDisguised = false;

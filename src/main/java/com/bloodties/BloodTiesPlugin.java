@@ -1,7 +1,7 @@
 package com.bloodties;
 
 import com.bloodties.commands.BloodTiesCommand;
-import com.bloodties.game.GameManager;
+import com.bloodties.managers.GameManager;
 import com.bloodties.listeners.GameListener;
 import com.bloodties.listeners.LobbyListener;
 import com.bloodties.managers.ConfigManager;
@@ -45,7 +45,7 @@ public class BloodTiesPlugin extends JavaPlugin {
         Logger.info("Shutting down Blood Ties plugin...");
         
         if (gameManager != null) {
-            gameManager.shutdown();
+            gameManager.cleanup();
         }
         
         if (dataManager != null) {

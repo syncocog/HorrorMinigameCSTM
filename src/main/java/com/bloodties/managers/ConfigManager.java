@@ -21,7 +21,7 @@ public class ConfigManager {
         loadDataConfig();
     }
     
-    private void loadConfig() {
+    public void loadConfig() {
         plugin.saveDefaultConfig();
         config = plugin.getConfig();
         

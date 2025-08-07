@@ -90,8 +90,8 @@ public class BloodTiesCommand implements CommandExecutor, TabCompleter {
     
     private void handleJoin(Player player, String[] args) {
         if (args.length < 2) {
-            player.sendMessage(ChatColor.RED + "Usage: /bt join <mode>");
-            player.sendMessage(ChatColor.GRAY + "Available modes: solo, duo, squad");
+            player.sendMessage("§c§l❌ §7Usage: §e/bt join <mode>");
+            player.sendMessage("§7Available modes: §eSolo§7, §eDuo§7, §eSquad");
             return;
         }
         
@@ -113,21 +113,11 @@ public class BloodTiesCommand implements CommandExecutor, TabCompleter {
                 return;
         }
         
-        plugin.getGameManager().addToQueue(player, mode);
+        plugin.getGameManager().joinGame(player, mode);
     }
     
     private void handleLeave(Player player) {
-        if (plugin.getGameManager().isPlayerInGame(player)) {
-            Game game = plugin.getGameManager().getPlayerGame(player);
-            if (game != null) {
-                game.removePlayer(player);
-            }
-            player.sendMessage(ChatColor.GREEN + "You have left the game!");
-        } else if (plugin.getGameManager().isPlayerInQueue(player)) {
-            plugin.getGameManager().removeFromQueue(player);
-        } else {
-            player.sendMessage(ChatColor.RED + "You are not in a game or queue!");
-        }
+        plugin.getGameManager().leaveGame(player);
     }
     
     private void handleVote(Player player, String[] args) {
@@ -136,19 +126,24 @@ public class BloodTiesCommand implements CommandExecutor, TabCompleter {
             return;
         }
         
-        Game game = plugin.getGameManager().getPlayerGame(player);
+        Game game = plugin.getGameManager().getPlayerGame(player.getUniqueId());
         if (game == null) {
-            player.sendMessage(ChatColor.RED + "You are not in a game!");
+            player.sendMessage("§c§l❌ §7You are not in a game!");
             return;
         }
         
         if (game.getState() != com.bloodties.game.GameState.VOTING) {
-            player.sendMessage(ChatColor.RED + "Voting is not currently active!");
+            player.sendMessage("§c§l❌ §7Voting is not currently active!");
             return;
         }
         
         String targetName = args[1];
-        game.castVote(player.getUniqueId(), targetName);
+        GamePlayer target = game.getPlayerByName(targetName);
+        if (target == null) {
+            player.sendMessage("§c§l❌ §7Player " + targetName + " not found!");
+            return;
+        }
+        game.castVote(player.getUniqueId(), target.getPlayerId());
     }
     
     private void handleSellVote(Player player, String[] args) {
@@ -157,35 +152,34 @@ public class BloodTiesCommand implements CommandExecutor, TabCompleter {
             return;
         }
         
-        Game game = plugin.getGameManager().getPlayerGame(player);
+        Game game = plugin.getGameManager().getPlayerGame(player.getUniqueId());
         if (game == null) {
-            player.sendMessage(ChatColor.RED + "You are not in a game!");
+            player.sendMessage("§c§l❌ §7You are not in a game!");
             return;
         }
         
-        String targetName = args[1];
-        String info = String.join(" ", Arrays.copyOfRange(args, 2, args.length));
+        String info = String.join(" ", Arrays.copyOfRange(args, 1, args.length));
         
-        game.offerVote(player.getUniqueId(), targetName, info);
-        player.sendMessage(ChatColor.YELLOW + "Vote offer sent for " + targetName + " with info: " + info);
+        game.offerVote(player.getUniqueId(), info);
+        player.sendMessage("§a§l💰 §7Vote offer sent with info: §e" + info);
     }
     
     private void handleUseAbility(Player player) {
-        Game game = plugin.getGameManager().getPlayerGame(player);
+        Game game = plugin.getGameManager().getPlayerGame(player.getUniqueId());
         if (game == null) {
-            player.sendMessage(ChatColor.RED + "You are not in a game!");
+            player.sendMessage("§c§l❌ §7You are not in a game!");
             return;
         }
         
         GamePlayer gamePlayer = game.getPlayer(player.getUniqueId());
         if (gamePlayer == null) {
-            player.sendMessage(ChatColor.RED + "Player data not found!");
+            player.sendMessage("§c§l❌ §7Player data not found!");
             return;
         }
         
         if (!gamePlayer.canUseAbility()) {
             long remaining = gamePlayer.getRemainingCooldown();
-            player.sendMessage(ChatColor.RED + "Ability on cooldown! " + (remaining / 1000) + "s remaining");
+            player.sendMessage("§c§l⏰ §7Ability on cooldown! §e" + (remaining / 1000) + "s §7remaining");
             plugin.getSoundManager().playCooldown(player);
             return;
         }
@@ -400,28 +394,28 @@ public class BloodTiesCommand implements CommandExecutor, TabCompleter {
     }
     
     private void handleTeam(Player player) {
-        Game game = plugin.getGameManager().getPlayerGame(player);
+        Game game = plugin.getGameManager().getPlayerGame(player.getUniqueId());
         if (game == null) {
-            player.sendMessage(ChatColor.RED + "You are not in a game!");
+            player.sendMessage("§c§l❌ §7You are not in a game!");
             return;
         }
         
-        if (game.getGameMode().isSolo()) {
-            player.sendMessage(ChatColor.RED + "Teams are not available in Solo mode!");
+        if (game.getMode().isSolo()) {
+            player.sendMessage("§c§l❌ §7Teams are not available in Solo mode!");
             return;
         }
         
         GamePlayer gamePlayer = game.getPlayer(player.getUniqueId());
         if (gamePlayer == null) {
-            player.sendMessage(ChatColor.RED + "Player data not found!");
+            player.sendMessage("§c§l❌ §7Player data not found!");
             return;
         }
         
         if (gamePlayer.getBloodPactPartner() != null) {
-            player.sendMessage(ChatColor.GREEN + "Your blood pact partner: " + 
+            player.sendMessage("§a§l🤝 §7Your blood pact partner: §e" + 
                 gamePlayer.getBloodPactPartner().getName());
         } else {
-            player.sendMessage(ChatColor.YELLOW + "You don't have a blood pact partner yet.");
+            player.sendMessage("§e§l💡 §7You don't have a blood pact partner yet.");
         }
     }
     
@@ -455,13 +449,11 @@ public class BloodTiesCommand implements CommandExecutor, TabCompleter {
                         player.sendMessage(ChatColor.RED + "Invalid mode!");
                         return;
                 }
-                plugin.getGameManager().forceStartGame(mode);
-                player.sendMessage(ChatColor.GREEN + "Force started " + mode.getDisplayName() + " game!");
+                plugin.getGameManager().forceStartGame(player, mode);
                 break;
                 
             case "stopall":
-                plugin.getGameManager().stopAllGames();
-                player.sendMessage(ChatColor.GREEN + "Stopped all games!");
+                plugin.getGameManager().stopAllGames(player);
                 break;
                 
             case "kick":
@@ -474,20 +466,11 @@ public class BloodTiesCommand implements CommandExecutor, TabCompleter {
                     player.sendMessage(ChatColor.RED + "Player not found!");
                     return;
                 }
-                plugin.getGameManager().kickPlayerFromGame(target);
-                player.sendMessage(ChatColor.GREEN + "Kicked " + target.getName() + " from their game!");
+                plugin.getGameManager().kickPlayer(player, target.getName());
                 break;
                 
             case "stats":
-                player.sendMessage(ChatColor.GREEN + "=== Blood Ties Statistics ===");
-                player.sendMessage(ChatColor.WHITE + "Active Games: " + 
-                    ChatColor.AQUA + plugin.getGameManager().getActiveGamesCount());
-                player.sendMessage(ChatColor.WHITE + "Players in Games: " + 
-                    ChatColor.AQUA + plugin.getGameManager().getTotalPlayersInGames());
-                for (GameMode gameMode : GameMode.values()) {
-                    player.sendMessage(ChatColor.WHITE + gameMode.getDisplayName() + " Queue: " + 
-                        ChatColor.AQUA + plugin.getGameManager().getQueueSize(gameMode));
-                }
+                plugin.getGameManager().showServerStats(player);
                 break;
                 
             default:
